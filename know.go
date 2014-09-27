@@ -67,8 +67,8 @@ func AskProviders(question string, providers []Provider) (<-chan *Answer, <-chan
 }
 
 var (
-	Google  Provider = NewGoogleProvider()
-	Wolfram Provider = NewWolframProvider()
+	Google  = NewGoogleProvider()
+	Wolfram = NewWolframProvider()
 
 	defaultProviders = []Provider{
 		Google,

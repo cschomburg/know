@@ -2,6 +2,7 @@ package know
 
 import (
 	"encoding/base64"
+	"encoding/xml"
 	"errors"
 	"html"
 	"io"
@@ -12,17 +13,93 @@ import (
 	"github.com/PuerkitoBio/goquery"
 )
 
-type WolframProvider struct{}
+type WolframProvider struct {
+	ApiKey string
+}
 
 func NewWolframProvider() *WolframProvider {
 	return &WolframProvider{}
 }
 
+func (p *WolframProvider) SetApiKey(key string) {
+	p.ApiKey = key
+}
+
 func (p *WolframProvider) Name() string {
+	if p.ApiKey != "" {
+		return "Wolfram API"
+	}
 	return "Wolfram"
 }
 
+type apiQueryResult struct {
+	Success  bool     `xml:"success,attr"`
+	HasError bool     `xml:"error,attr"`
+	Error    string   `xml:"error>msg"`
+	Pods     []apiPod `xml:"pod"`
+}
+
+type apiPod struct {
+	Title   string      `xml:"title,attr"`
+	SubPods []apiSubPod `xml:"subpod"`
+}
+
+type apiSubPod struct {
+	Title     string `xml:"attr"`
+	Plaintext string `xml:"plaintext"`
+}
+
 func (p *WolframProvider) Ask(question string) (*Answer, error) {
+	if p.ApiKey == "" {
+		return p.askPublic(question)
+	}
+
+	u, err := url.Parse("https://api.wolframalpha.com/v2/query")
+	if err != nil {
+		return nil, err
+	}
+	v := url.Values{}
+	v.Set("input", question)
+	v.Set("appid", p.ApiKey)
+	u.RawQuery = v.Encode()
+
+	resp, err := http.Get(u.String())
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != 200 {
+		return nil, errors.New("Unexpected status: " + resp.Status)
+	}
+
+	defer resp.Body.Close()
+	dec := xml.NewDecoder(resp.Body)
+	result := apiQueryResult{}
+	if err := dec.Decode(&result); err != nil {
+		return nil, err
+	}
+
+	if result.HasError {
+		return nil, errors.New(result.Error)
+	}
+
+	ans := &Answer{}
+	for _, pod := range result.Pods {
+		for _, s := range pod.SubPods {
+			switch {
+			case strings.Contains(pod.Title, "Input"):
+				ans.Question = s.Plaintext
+			case strings.Contains(pod.Title, "Result"):
+				ans.Answer = s.Plaintext
+			case ans.Answer == "":
+				ans.Answer = s.Plaintext
+			}
+		}
+	}
+
+	return ans, nil
+}
+
+func (p *WolframProvider) askPublic(question string) (*Answer, error) {
 	u, err := url.Parse("https://www.wolframalpha.com/input/")
 	if err != nil {
 		return nil, err
